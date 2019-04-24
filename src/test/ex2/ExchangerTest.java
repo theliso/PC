@@ -1,4 +1,5 @@
-package test;
+package test.ex2;
+
 
 import org.junit.Test;
 

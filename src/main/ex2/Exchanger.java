@@ -1,4 +1,4 @@
-package main;
+package main.ex2;
 
 import java.util.Optional;
 import java.util.concurrent.locks.Condition;
@@ -26,7 +26,7 @@ public class Exchanger<T> {
                 condition.notify();
                 return Optional.of(exchangeholder.dataToTrade);
             }
-            TimeoutHolder th = new TimeoutHolder(timeout);
+            main.TimeoutHolder th = new main.TimeoutHolder(timeout);
             do {
                 if ((timeout = th.value()) == 0){
                     return Optional.empty();
