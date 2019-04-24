@@ -15,11 +15,11 @@ namespace exercicio1
 
         private Func<T> provider;
 
-        private T providerResult;
+        private T providerResult; // provider result holder
 
-        private bool done;
+        private bool done; // tells if the call to the provider as successfully returned or not
 
-        private bool isBeingCalculated = false;
+        private bool isBeingCalculated = false; // indicates if a thread called the provider or not
 
         public ExpirableLazy(Func<T> provider, TimeSpan timeToLive)
         {
@@ -39,42 +39,44 @@ namespace exercicio1
                     {
                         return providerResult;
                     }
-                }
-
-                do
-                {
-                    if (!done || timeOut.Value == 0)
+                    do
                     {
-                        if (isBeingCalculated)
+                        if (!done || timeOut.Value == 0)
                         {
-                            try
+                            if (isBeingCalculated)
                             {
-                                Monitor.Wait(monitor);
+                                try
+                                {
+                                    Monitor.Wait(monitor);
+                                }
+                                catch (ThreadInterruptedException)
+                                {
+                                    throw;
+                                }
                             }
-                            catch (ThreadInterruptedException)
+                            else
                             {
-                                throw;
+                                try
+                                {
+                                    timeOut = new TimeoutHolder(timeToLive.Milliseconds);
+                                    Monitor.Exit(monitor);
+                                    providerResult = provider();
+                                    Monitor.Enter(monitor);
+                                    isBeingCalculated = false;
+                                    done = true;
+                                    Monitor.PulseAll(monitor);
+                                }
+                                catch (InvalidOperationException)
+                                {
+                                    Monitor.Enter(monitor);
+                                    Monitor.Pulse(monitor);
+                                    isBeingCalculated = true;
+                                    throw;
+                                }
                             }
                         }
-                        else
-                        {
-                            try
-                            {
-                                timeOut = new TimeoutHolder(timeToLive.Milliseconds);
-                                providerResult = provider();
-                                isBeingCalculated = false;
-                                done = true;
-                                Monitor.PulseAll(monitor);
-                            }
-                            catch (InvalidOperationException)
-                            {
-                                Monitor.Pulse(monitor);
-                                isBeingCalculated = true;
-                                throw;
-                            }
-                        }
-                    }
-                } while (!done);
+                    } while (!done);
+                }
 
                 return providerResult;
             }
