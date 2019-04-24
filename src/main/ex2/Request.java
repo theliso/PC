@@ -1,4 +1,4 @@
-package main;
+package main.ex2;
 
 public class Request<T> {
 
