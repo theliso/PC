@@ -2,9 +2,7 @@ package main.ex4;
 
 import main.TimeoutHolder;
 
-import java.util.ArrayList;
-import java.util.LinkedList;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
@@ -13,14 +11,16 @@ import java.util.concurrent.locks.ReentrantLock;
 public class SimpleThreadPoolExecutor {
 
     private Lock mLock;
-    private Condition workDelivered;
-    private Condition allWorkDone;
+    private boolean isShuttingDown = false;
     private int maxPoolSize;
     private int keepAliveTime;
-    private boolean isShuttingDown = false;
+    private Condition threadPoolFull;
+    private Condition hasTerminate;
+
+    private Queue<WorkerThreads> threadPool;
+
+
     private boolean shutdownConcluded = false;
-    private List<WorkerThreads> threadPool;
-    private List<Work> workQueue = new LinkedList<>();
 
     /**
      * @param maxPoolSize   -> max number of worker threads in the pool
@@ -29,58 +29,85 @@ public class SimpleThreadPoolExecutor {
     public SimpleThreadPoolExecutor(int maxPoolSize, int keepAliveTime) {
         this.maxPoolSize = maxPoolSize;
         this.keepAliveTime = keepAliveTime;
-        threadPool = new ArrayList<>(maxPoolSize);
+        threadPool = new PriorityQueue<>();
         mLock = new ReentrantLock();
-        workDelivered = mLock.newCondition();
-        allWorkDone = mLock.newCondition();
+        threadPoolFull = mLock.newCondition();
+        hasTerminate = mLock.newCondition();
     }
 
-    /**
-     * @param command
-     * @param timeout
-     * @return
-     * @throws InterruptedException
-     */
+
     public boolean execute(Runnable command, int timeout) throws InterruptedException {
         mLock.lock();
         try {
-            if (isShuttingDown) {
-                throw new RejectedExecutionException();
-            }
-
-            return false;
+            TimeoutHolder th = new TimeoutHolder(timeout);
+            do {
+                if (isShuttingDown) {
+                    throw new RejectedExecutionException();
+                }
+                if (threadPool.size() == maxPoolSize) {
+                    try {
+                        threadPoolFull.wait();
+                    } catch (InterruptedException e) {
+                        throw new InterruptedException();
+                    }
+                }
+                if (threadPool.size() == 0) {
+                    WorkerThreads workerThreads =
+                            new WorkerThreads(
+                                    new TimeoutHolder(keepAliveTime),
+                                    command,
+                                    threadPoolFull,
+                                    threadPool,
+                                    hasTerminate
+                            );
+                    workerThreads.start();
+                    return true;
+                }
+                WorkerThreads workerThreads = threadPool.remove();
+                if (workerThreads.keepAliveTime.value() > 0) {
+                    workerThreads.keepAliveTime = new TimeoutHolder(keepAliveTime);
+                    workerThreads.cmd = command;
+                    workerThreads.start();
+                    return true;
+                }
+            } while (th.value() > 0);
         } finally {
             mLock.unlock();
         }
+        return false;
     }
 
 
-    /**
-     *
-     */
     public void shutdown() {
         mLock.lock();
         try {
             isShuttingDown = true;
-            Condition condition = mLock.newCondition();
-            shutdownConcluded = true;
         } finally {
             mLock.unlock();
         }
     }
 
-    /**
-     * @param timeout
-     * @return
-     * @throws InterruptedException
-     */
-    public boolean awaitTermination(int timeout) throws InterruptedException {
-        if (shutdownConcluded) {
-            return true;
-        }
-        TimeoutHolder th = new TimeoutHolder(timeout);
 
-        return false;
+    public boolean awaitTermination(int timeout) throws InterruptedException {
+        mLock.lock();
+        try {
+            TimeoutHolder th = new TimeoutHolder(timeout);
+            int amountOfWork = 0;
+            do {
+                try{
+                    hasTerminate.wait();
+                    ++amountOfWork;
+                } catch (InterruptedException e){
+                    throw new InterruptedException();
+                }
+                if(th.value() == 0){
+                    return false;
+                }
+            }while (amountOfWork < threadPool.size());
+        }finally {
+            mLock.unlock();
+        }
+        return true;
     }
 
 }
