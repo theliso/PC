@@ -7,6 +7,7 @@ import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.Assert.assertEquals;
 
@@ -14,10 +15,11 @@ public class ExchangerTest {
 
     private final int NUMBER_OF_THREADS = 20;
     private final List<String> toChange = new ArrayList<>(NUMBER_OF_THREADS);
+    private final List<String> toCmp = new ArrayList<>(NUMBER_OF_THREADS);
     private final ArrayList<Thread> threads = new ArrayList<>(NUMBER_OF_THREADS);
 
     @Before
-    private void setList(){
+    public void setList(){
         toChange.add("a");
         toChange.add("b");
         toChange.add("c");
@@ -40,24 +42,37 @@ public class ExchangerTest {
         toChange.add("t");
     }
 
+    public void joinUninterruptibly(Thread jt) {
+        do {
+            try {
+                jt.join();
+                break;
+            } catch (InterruptedException ie) {}
+        } while (true);
+    }
+
+
     @Test
-    public void testExchange() {
-        toChange.forEach(System.out::println);
-        List<String> toCompare = toChange;
+    public void testExchangeBetweenTwoThreads() {
         Exchanger<String> exchanger = new Exchanger<>();
+        final int[] idx = {0};
         for (int i = 0; i < NUMBER_OF_THREADS; i++) {
-            final int[] idx = {i};
             threads.add(i, new Thread(() -> {
                 try {
-                    exchanger.exchange(toChange.get(idx[0]), 1000);
+                    int threadMsgIdx = idx[0]++;
+                    Optional<String> exchange = exchanger.exchange(toChange.get(threadMsgIdx), 1000);
+                    exchange.ifPresent(s ->
+                            System.out.println("inside ifPresent threadMsgIdx = " + threadMsgIdx + " result = " + s));
+
                 } catch (InterruptedException e) {
                 }
             }));
-        }
-        for (int i = 0, j = toCompare.size() - 1; i < toCompare.size(); i++) {
-            assertEquals(toChange.get(j), toCompare.get(i));
+            threads.get(i).start();
         }
 
+        for (Thread thread : threads) {
+            joinUninterruptibly(thread);
+        }
     }
 
 }

@@ -3,21 +3,22 @@ package main.ex3;
 import main.TimeoutHolder;
 
 import java.util.LinkedList;
+import java.util.PriorityQueue;
 import java.util.Queue;
-import java.util.concurrent.locks.Condition;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.logging.Logger;
 
 public class TransferQueue<T> {
 
     private final Lock mLock;
-    private Condition condition;
 
     private Queue<Messages<T>> msgQueue = new LinkedList<>();
+    private final Logger logger = Logger.getLogger("main.ex3.TranferQueue");
 
     public TransferQueue() {
         mLock = new ReentrantLock();
-        this.condition = mLock.newCondition();
     }
 
     /**
@@ -44,31 +45,32 @@ public class TransferQueue<T> {
      * @throws InterruptedException when the waiting thread gets interrupted
      *                              When this method throws the exception the message must be removed from the list
      */
-    public boolean transfer(T msg, int timeout) throws InterruptedException {
+    public boolean transfer(T msg, long timeout) throws InterruptedException {
         mLock.lock();
         try {
-
-            Messages<T> msgTransfer = new Messages<>(msg, condition);
-            msgQueue.add(msgTransfer);
+            logger.info("transfer executing: " + msg.toString());
+            Messages<T> msgTransfer = new Messages<>(msg, mLock.newCondition());
+            put(msg);
             TimeoutHolder th = new TimeoutHolder(timeout);
             do {
-                if (th.value() == 0) {
+                if ((timeout = th.value()) == 0) {
                     msgQueue.remove();
                     return false;
                 }
                 try {
-                    condition.wait(th.value());
+                    msgTransfer.condition.await(timeout, TimeUnit.MILLISECONDS);
+                    msgTransfer = msgQueue.remove();
                 } catch (InterruptedException e) {
                     if (msgTransfer.delivered) {
-                        Thread.currentThread().interrupt();
-                        return true;
-                    }
-                    if (msgTransfer.interrupted) {
                         msgQueue.remove();
-                        return false;
+                        Thread.currentThread().interrupt();
+                        throw e;
                     }
+                    msgTransfer.interrupted = true;
+                    return false;
                 }
             } while (!msgTransfer.delivered);
+            logger.info("transfer executed successfully");
             return true;
         } finally {
             mLock.unlock();
@@ -82,24 +84,26 @@ public class TransferQueue<T> {
      * @return true if it returns a message whithin the tomeout stablished
      * false if timeout reaches and the thread waiting gets interrupted
      */
-    public T take(int timeout) throws InterruptedException {
+    public T take(long timeout) throws InterruptedException {
         mLock.lock();
         try {
-            if (msgQueue.size() == 0) {
-                return null;
-            }
+            logger.info("take executing");
             TimeoutHolder th = new TimeoutHolder(timeout);
-            if (th.value() != 0) {
+            do {
+                if ((timeout = th.value()) == 0) {
+                    return null;
+                }
                 Messages<T> msg = msgQueue.remove();
-                if (msg.interrupted) {
-                    msgQueue.add(msg);
+                if (msg.interrupted){
+                    logger.warning("Thread interrupted");
                     throw new InterruptedException();
                 }
                 msg.delivered = true;
-                msg.condition.notify();
+                msg.condition.signal();
+                msgQueue.add(msg);
+                logger.info("Take executed successfully");
                 return msg.msg;
-            }
-            return null;
+            } while (msgQueue.size() > 0);
         } finally {
             mLock.unlock();
         }

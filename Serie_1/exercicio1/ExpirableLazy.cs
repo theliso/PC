@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Threading;
 using exercicio1.Properties;
 
@@ -39,45 +38,61 @@ namespace exercicio1
                     {
                         return providerResult;
                     }
-                    do
+                }
+                bool exception = false;
+                do
+                {
+                    if (!done || timeOut.Value == 0)
                     {
-                        if (!done || timeOut.Value == 0)
+                        if (isBeingCalculated)
                         {
-                            if (isBeingCalculated)
+                            lock (monitor)
                             {
                                 try
                                 {
                                     Monitor.Wait(monitor);
                                 }
-                                catch (ThreadInterruptedException)
+                                catch (ThreadInterruptedException e)
                                 {
-                                    throw;
+                                    throw e;
                                 }
                             }
-                            else
+                        }
+                        else
+                        {
+                            lock (monitor)
                             {
-                                try
+                                isBeingCalculated = true;
+                            }
+                            try
+                            {
+                                var res = provider();
+                                lock (monitor)
                                 {
-                                    timeOut = new TimeoutHolder(timeToLive.Milliseconds);
-                                    Monitor.Exit(monitor);
-                                    providerResult = provider();
-                                    Monitor.Enter(monitor);
+                                    providerResult = res;
                                     isBeingCalculated = false;
                                     done = true;
                                     Monitor.PulseAll(monitor);
                                 }
-                                catch (InvalidOperationException)
+                            }
+                            catch (InvalidOperationException e)
+                            {
+                                exception = true;
+                            }
+                            if (exception)
+                            {
+                                lock (monitor)
                                 {
-                                    Monitor.Enter(monitor);
+                                    timeOut = new TimeoutHolder(timeToLive.Milliseconds);
+                                    isBeingCalculated = false;
                                     Monitor.Pulse(monitor);
-                                    isBeingCalculated = true;
-                                    throw;
                                 }
+                                throw new InvalidOperationException();
                             }
                         }
-                    } while (!done);
-                }
-
+                    }
+                    
+                } while (!done);
                 return providerResult;
             }
         } // throws InvalidOperationException, ThreadInterruptedException
